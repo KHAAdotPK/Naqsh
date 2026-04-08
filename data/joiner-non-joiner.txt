@@ -1,0 +1,9 @@
+id,text_label,urdu_text,notes
+1,ZWNJ_Test,"دیکھاجائے، پانی پی لو","Tests Zero Width Non-Joiner (U+200C) in 'دیکھاجائے'"
+2,Space_Omission,"واٹر بورڈآج بند ہے","Tests space omission: 'بورڈآج' (Board today) should be two tokens"
+3,Honorifics,"حضرت محمدﷺ اللہ کے رسول ہیں","Tests calligraphy honorific ligature (U+FDFA)"
+4,Mixed_Script,"ڈیٹا سیٹ (Dataset) میں 10,000 فائلیں ہیں۔","Tests mixed script and large Western numbers"
+5,Diacritics_Heavy,"بچّوں کو اِسکول بھیجنا ضروری ہے۔","Tests Shadda (ّ) and Zer (ِ) for normalization"
+6,Urdu_Digits,"رقم: ۳۴۵۰ روپے","Tests Urdu/Eastern Arabic digits (۳، ۴، ۵، ۰)"
+7,Punctuation_Edge,"کیا؟ اس نے کہا، ""نہیں!""","Tests nested quotes and Urdu punctuation marks"
+8,Compound_Words,"خوبصورتی اور دارُالحکومت","Tests compound words with internal formatting"

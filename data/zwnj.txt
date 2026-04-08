@@ -1,0 +1,6 @@
+id,text_label,urdu_text,notes
+1,ZWNJ_Example1,"خوب‌صورت","ZWNJ between خوب and صورت"
+2,ZWNJ_Example2,"دیکھا‌جائے","ZWNJ between دیکھا and جائے"
+3,ZWNJ_Example3,"نہیں‌تو","ZWNJ between نہیں and تو"
+4,ZWNJ_Example4,"کبھی‌نہیں","ZWNJ between کبھی and نہیں"
+5,ZWNJ_Example5,"کیا‌ہے","ZWNJ between کیا and ہے"
