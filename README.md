@@ -57,7 +57,9 @@ Both `:` and `+` are in the punctuation set and would normally be stripped. A st
 10:30:45 →  10:30:45 (chained colons preserved)
 اردو:    →  اردو     (colon not between digits, stripped)
 10:abc   →  10 abc   (colon not followed by digit, stripped)
-10:+5    →  10 5     (chained operators, both stripped)
+10:+5    →  105      chained operators — both stripped, adjacent digits concatenate.
+                     Does not occur in real Urdu text.
+3.+2     →  32       same behaviour as 10:+5.
 ```
 
 All three digit systems are recognized: Western `0–9`, Eastern Arabic `٠–٩`, Urdu `۰–۹`.

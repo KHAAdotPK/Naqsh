@@ -54,6 +54,7 @@ class Parser
 
         std::string cleanLine(const std::string&); // Clean the line by removing punctuation and other characters
         bool isDigit(char32_t); // Check if the code point is a digit
+        bool isDot(char32_t); // Check if the code point is a dot
         bool isTokenDelimiter(char32_t); // Check if the code point is a token delimiter
         bool isUrduLetter(char32_t); // Check if the code point is an Urdu letter        
 };
@@ -69,9 +70,7 @@ Parser::~Parser(void)
 std::string Parser::cleanLine(const std::string& line)
 {
     bool skip = false;
-//#ifdef DROP_INVALID_UTF8_SEQUENCE    
     bool validUTF8Sequence = true; // All sequences are valid untill proven otherwise
-//#endif    
 
     // Variables for state machine logic for colon between two digits as in 10:45
     bool isDigitFound = false, isColonFound = false;
@@ -79,6 +78,8 @@ std::string Parser::cleanLine(const std::string& line)
     bool isZeroWidthNonJoinerFound = false;
     // Variables for state machine logic for plus operator
     bool isPlusOperatorFound = false;
+    // Variables for state machine logic for dot
+    char32_t pendingDot = 0; // 0 means no dot pending or more precisely the U+002E or U+066B if digit was seen; 0 otherwise
     
     std::string result;
     result.reserve(line.size());
@@ -267,9 +268,7 @@ std::string Parser::cleanLine(const std::string& line)
         /**********************************************************************************
         //               Deal with the token delimiter starts here                       //
         /*********************************************************************************/
-//#ifdef DROP_INVALID_UTF8_SEQUENCE        
         if (validUTF8Sequence)
-//#endif            
         {
             if (isTokenDelimiter(cp))
             {                
@@ -291,9 +290,7 @@ std::string Parser::cleanLine(const std::string& line)
         /*********************************************************************************
         //          The state machine logic start here for Zero Width Non-Joiner        //
         /*********************************************************************************/
-//#ifdef DROP_INVALID_UTF8_SEQUENCE        
         if (validUTF8Sequence)
-//#endif            
         {   
             /*
                 ZWNJ is part of ALL_PUNCTUATION aeeay. 
@@ -324,19 +321,18 @@ std::string Parser::cleanLine(const std::string& line)
         /*********************************************************************************
         //          The state machine logic ends here for Zero Width Non-Joiner         //
         /**********************************************************************************/
-
         /**********************************************************************************
-        // The state machine logic starts here for colon and plus operator between two   //
-        // digits as in 10:45 or 10+45. Check if cp is a digit                           //
+        // The state machine logic starts here for colon, plus, and dot between two      //
+        // digits as in 10:45, 10+3, or 3.14. Check if cp is a digit                    //
         **********************************************************************************/
         /*
             State machine: preserve operator between two digits
             ===================================================
-            Handles colon (U+003A) and plus (U+002B) that appear between
-            two digit characters. Both operators are in ALL_PUNCTUATION and
-            would normally be stripped. This state machine detects the
-            digit-operator-digit pattern and re-emits the operator before
-            the second digit is appended.
+            Handles colon (U+003A), plus (U+002B), and dot/decimal separator
+            (U+002E, U+066B) that appear between two digit characters. All three
+            are in ALL_PUNCTUATION and would normally be stripped. This state
+            machine detects the digit-operator-digit pattern and re-emits the
+            operator before the second digit is appended.
 
             Digit sets recognized:
                 Western Arabic   0–9     (U+0030–U+0039)
@@ -347,36 +343,66 @@ std::string Parser::cleanLine(const std::string& line)
 
                 10:30           →  10:30       colon between two digits, preserved
                 10+3            →  10+3        plus between two digits, preserved
-                10+3+5          →  10+3+5      chained plus operators, all preserved
+                3.14            →  3.14        dot between two digits, preserved
+                3٫14            →  3٫14        Arabic decimal separator, preserved
+                10+3+5          →  10+3+5      chained plus, all preserved
                 10:30:45        →  10:30:45    chained colons, all preserved
+                3.14+2          →  3.14+2      mixed operators, all preserved
                 ۲+۳             →  ۲+۳         Urdu digits with plus, preserved
                 ۱۰:۳۰           →  ۱۰:۳۰       Urdu digits with colon, preserved
 
+                ۱. آج           →  ۱ آج        ordinal dot not followed by digit, dropped
                 اردو:           →  اردو        colon not preceded by digit, dropped
                 :30             →  30          colon not preceded by digit, dropped
                 10:             →  10          colon not followed by digit, dropped
                 10:abc          →  10 abc      colon not followed by digit, dropped
-                10:+5           →  10 5        chained operators, both dropped
+                10:+5           →  105         chained operators — both stripped, digits
+                                               concatenate directly. No space is inserted
+                                               because the cleaner only re-emits operators,
+                                               it never synthesizes separators. This is
+                                               acceptable: digit-operator-operator sequences
+                                               do not occur in real Urdu text.
+                3.+2            →  32          same behaviour as 10:+5 above.
                 +30             →  30          plus not preceded by digit, dropped
                 10+             →  10          plus not followed by digit, dropped
+                .30             →  30          dot not preceded by digit, dropped
 
             Flags:
                 isDigitFound         — last character processed was a digit
                 isColonFound         — digit was seen, then colon; waiting for next digit
                 isPlusOperatorFound  — digit was seen, then plus; waiting for next digit
+                isDotFound           — digit was seen, then dot; waiting for next digit
 
-            Invariant: isColonFound and isPlusOperatorFound are mutually exclusive.
-            Only one can be true at any point in the iteration.
+            Invariant: isColonFound, isPlusOperatorFound, and isDotFound are mutually
+            exclusive. Only one can be true at any point in the iteration.
+
+            Re-emit order in the isDigit branch: isDotFound is checked first, then
+            isPlusOperatorFound, then isColonFound. Order does not affect correctness
+            since the flags are mutually exclusive, but dot is listed first as it is
+            the most recently added operator.
         */
-//#ifdef DROP_INVALID_UTF8_SEQUENCE        
         if (validUTF8Sequence)
-//#endif            
         {
             if (isDigit(cp))
-            {
-                if (isPlusOperatorFound) // If the previous character was a plus operator and this cp is didgit append a plus operator before appending this didit
+            {                
+                if (pendingDot != 0)
                 {
-                    result += '+';
+                    // U+002E is ASCII, single byte, emit directly
+                    // U+066B is 2-byte UTF-8: 0xD9 0xAB
+                    if (pendingDot == UrduPunctuation::FULL_STOP_LATIN)
+                    {
+                        result += '.';
+                    }
+                    else if (pendingDot == UrduPunctuation::ARABIC_DECIMAL_SEPARATOR)
+                    {
+                        result += '\xD9';
+                        result += '\xAB';
+                    }
+                    pendingDot = 0;
+                }                
+                else if (isPlusOperatorFound) // If the previous character was a plus operator and this cp is didgit append a plus operator before appending this didit
+                {
+                    result += '+'; // Append the plus operator
                     isPlusOperatorFound = false; // Reset the flag
                 }
                 else if (isColonFound) // If the previous character was a colon and this cp is didgit append a colon before appending this didit
@@ -396,8 +422,10 @@ std::string Parser::cleanLine(const std::string& line)
                     isColonFound = false;
                 }
                 
-                // Set unconditionally, covers both the normal digit case and the
-                // case where an operator was just re-emitted and cp is still a digit.
+                /*
+                    Set unconditionally, covers both the normal digit case and the
+                    case where an operator was just re-emitted and cp is still a digit.
+                */
                 isDigitFound = true; // In first(and every subsequent) iteration, if the character is a digit, set the flag to true                
             }
             else if (isDigitFound) // In this iteration cp is not digit, but the previous character was a digit. So we need to check if the current character is a colon 
@@ -410,34 +438,36 @@ std::string Parser::cleanLine(const std::string& line)
                 {                 
                     isColonFound = true;
                 }
+                else if (isDot(cp)) // If this code point (cp) is dot , reset isDigitFound and set isDotFound
+                {                                     
+                    pendingDot = cp; // Store the dot
+                }
                                 
                 // Set unconditionally, whether cp was an operator (colon/plus) or
                 // any other non-digit character, isDigitFound must clear. The operator
                 // flags carry the state forward if needed.
-                isDigitFound = false; 
-                
+                isDigitFound = false;                 
             }
             else 
-            {
+            {                
                 /*
                     Neither a digit nor a character following a digit.
-                    Any operator flag that was set (colon or plus) but never
-                    followed by a digit is discarded here. The operator was
-                    not between two digits so it does not belong in the output.
-                    Both flags are reset unconditionally because they are mutually
-                    exclusive by construction, so resetting the already false one
+                    Any operator flag that was set (colon, plus, or dot) but never
+                    followed by a digit is discarded here. The operator was not between
+                    two digits so it does not belong in the output.
+                    All flags are reset unconditionally because they are mutually
+                    exclusive by construction, so resetting the already-false ones
                     is always a harmless no-op.
                 */
                 isColonFound = false; // Reset the flag. This is the case when colon is not followed by a digit
                 isPlusOperatorFound = false; // Reset the flag. This is the case when plus operator is not followed by a digit
+                pendingDot = 0; // Reset the pending dot
             }
         }
         /***********************************************************************************************************
-        // The state machine logic ends here for colon and plus operator between two digits as in 10:45 or 10+45  //
-        ***********************************************************************************************************/
-//#ifdef DROP_INVALID_UTF8_SEQUENCE        
+        // The state machine logic ends here for colon, plus, and dot between two digits as in 10:45, 10+3, 3.14 //
+        ***********************************************************************************************************/       
         if (validUTF8Sequence)
-//#endif            
         {
             if (punctSet.find(cp) == punctSet.end()) // If this code point is NOT punctuation, append the original bytes
             {
@@ -451,18 +481,34 @@ std::string Parser::cleanLine(const std::string& line)
         i += len; // Read notes at the top of this file for more information about the value of len
 
         skip = false; // skip is only valid for the iteration in which it is set
-//#ifdef DROP_INVALID_UTF8_SEQUENCE        
         validUTF8Sequence = true; // All sequences are valid untill proven otherwise
-//#endif            
                 
     } // End of while loop
     return result;
 }
 
-
 bool Parser::isDigit(char32_t cp)
 {
     return (cp >= U'\u0030' && cp <= U'\u0039') || (cp >= U'\u0660' && cp <= U'\u0669') || (cp >= U'\u06F0' && cp <= U'\u06F9');
+}
+
+/*
+    isDot — recognizes code points that function as a decimal separator
+    or domain/path separator in mixed Urdu text.
+
+    Included:
+        U+002E  FULL STOP LATIN          — decimal, URL, file extension
+        U+066B  ARABIC DECIMAL SEPARATOR — Urdu decimal notation (٫)
+
+    Excluded intentionally:
+        U+06D4  ARABIC FULL STOP (۔)     — Urdu sentence terminator, purely punctuation, never a separator between meaningful tokens.
+        U+FE52  SMALL FULL STOP          — legacy compatibility character, rare in modern Urdu text, add here if corpus evidence warrants it.
+        U+FF0E  FULLWIDTH FULL STOP      — legacy compatibility character,
+                                           same reasoning as U+FE52.
+*/
+bool Parser::isDot(char32_t cp)
+{
+    return cp == UrduPunctuation::FULL_STOP_LATIN || cp == UrduPunctuation::ARABIC_DECIMAL_SEPARATOR;
 }
 
 /**
