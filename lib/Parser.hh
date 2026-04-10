@@ -53,6 +53,7 @@ class Parser
         ~Parser(void);
 
         std::string cleanLine(const std::string&); // Clean the line by removing punctuation and other characters
+        bool isAlpha(char32_t); // Check if the code point is an alphabet
         bool isDigit(char32_t); // Check if the code point is a digit
         bool isDot(char32_t); // Check if the code point is a dot
         bool isTokenDelimiter(char32_t); // Check if the code point is a token delimiter
@@ -80,6 +81,9 @@ std::string Parser::cleanLine(const std::string& line)
     bool isPlusOperatorFound = false;
     // Variables for state machine logic for dot
     char32_t pendingDot = 0; // 0 means no dot pending or more precisely the U+002E or U+066B if digit was seen; 0 otherwise
+    bool dotSetByDigitMachine = false; // This flag is set when a dot is encountered after a digit
+    // Variables for state machine logic for alpha-dot-alpha
+    bool isAlphaFound = false;
     
     std::string result;
     result.reserve(line.size());
@@ -188,6 +192,10 @@ std::string Parser::cleanLine(const std::string& line)
                 isDigitFound = false;
                 isZeroWidthNonJoinerFound = false;
                 validUTF8Sequence = false;
+
+                isAlphaFound = false;
+                pendingDot = 0;
+                dotSetByDigitMachine = false;
                 /*
                     Since part of the UTF-8 sequence is invalid, we need to skip the entire sequence
                     The len is already set to the number of bytes in the sequence
@@ -244,6 +252,9 @@ std::string Parser::cleanLine(const std::string& line)
                 isPlusOperatorFound = false;
                 isDigitFound = false;
                 isZeroWidthNonJoinerFound = false;
+                isAlphaFound = false;
+                pendingDot = 0;
+                dotSetByDigitMachine = false;
 
                 /*
                    The append block at the bottom should also be guarded in this path.
@@ -265,6 +276,48 @@ std::string Parser::cleanLine(const std::string& line)
             // and then mask the subsequent byte to extract the lower 6 bits.
 
         } // End of for loop
+
+        /**********************************************************************************
+        //               State machine to handle aphabets starts here                    //
+        /*********************************************************************************/
+        if (validUTF8Sequence)
+        {
+            if (isAlpha(cp)) // If the current character is an alphabet
+            {
+                if (pendingDot != 0) // If the previous character was a dot
+                {
+                    if (!dotSetByDigitMachine) // If the dot was not set by the digit machine
+                    {                                            
+                        // U+002E is ASCII, single byte, emit directly
+                        // U+066B is 2-byte UTF-8: 0xD9 0xAB
+                        if (pendingDot == UrduPunctuation::FULL_STOP_LATIN)
+                        {
+                            result += '.';
+                        }
+                        else if (pendingDot == UrduPunctuation::ARABIC_DECIMAL_SEPARATOR)
+                        {
+                            result += '\xD9';
+                            result += '\xAB';
+                        }
+                        pendingDot = 0;
+                    }
+                }
+                isAlphaFound = true;            
+            }
+            else if (isAlphaFound) // If the previous iteration was an Alphabet
+            {
+                if (isDot(cp))
+                {
+                    pendingDot = cp;
+                }
+                
+                isAlphaFound = false;
+            }
+        }   
+        /**********************************************************************************
+        //               State machine to handle aphabets ends here                      //
+        /*********************************************************************************/
+
         /**********************************************************************************
         //               Deal with the token delimiter starts here                       //
         /*********************************************************************************/
@@ -281,7 +334,6 @@ std::string Parser::cleanLine(const std::string& line)
         /***********************************************************************************
         //               Deal with the token delimiter ends here                          //
         /**********************************************************************************/
-
 
         /*
             The following logic handles the case where ZWNJ is followed by an Urdu letter.
@@ -367,25 +419,43 @@ std::string Parser::cleanLine(const std::string& line)
                 10+             →  10          plus not followed by digit, dropped
                 .30             →  30          dot not preceded by digit, dropped
 
+                urdu.com        →  urdu.com     dot between two alpha sequences, preserved
+                www.urdu.com    →  www.urdu.com chained alpha dots, all preserved
+                data.csv        →  data.csv     file extension dot, preserved
+                Rs. 500         →  Rs 500       dot after alpha then space, dropped
+                Rs.500          →  Rs 500       dot after alpha, digit follows, dropped
+                ver.2           →  ver 2        dot after alpha, digit follows, dropped
+                version1.x      →  version1x    dot after digit, alpha follows, dropped
+
             Flags:
                 isDigitFound         — last character processed was a digit
                 isColonFound         — digit was seen, then colon; waiting for next digit
-                isPlusOperatorFound  — digit was seen, then plus; waiting for next digit
-                isDotFound           — digit was seen, then dot; waiting for next digit
+                isPlusOperatorFound  — digit was seen, then plus; waiting for next digit                `
+                pendingDot           — U+002E or U+066B, set by either the digit machine
+                                     (after digit) or the alpha machine (after alpha);
+                                     0 means no dot pending
+                dotSetByDigitMachine — true when pendingDot was set by the digit machine,
+                                     false when set by the alpha machine. Used to decide
+                                     whether a digit or alpha arriving next should
+                                     re-emit or discard the dot.
 
-            Invariant: isColonFound, isPlusOperatorFound, and isDotFound are mutually
-            exclusive. Only one can be true at any point in the iteration.
+            Invariant: isColonFound, isPlusOperatorFound, and pendingDot are mutually
+            exclusive within the digit machine. pendingDot is additionally shared with
+            the alpha machine — dotSetByDigitMachine records ownership.
 
-            Re-emit order in the isDigit branch: isDotFound is checked first, then
+            Re-emit order in the isDigit branch: pendingDot is checked first, then
             isPlusOperatorFound, then isColonFound. Order does not affect correctness
             since the flags are mutually exclusive, but dot is listed first as it is
             the most recently added operator.
         */
         if (validUTF8Sequence)
         {
-            if (isDigit(cp))
-            {                
-                if (pendingDot != 0)
+            if (isDigit(cp)) // If the current character is a digit
+            {                                   
+                /*
+                    Only re-emit pendingDot if dotSetByDigitMachine is true
+                 */ 
+                if (pendingDot != 0 && dotSetByDigitMachine) // If the previous character was a dot and it was set by the digit machine
                 {
                     // U+002E is ASCII, single byte, emit directly
                     // U+066B is 2-byte UTF-8: 0xD9 0xAB
@@ -399,6 +469,7 @@ std::string Parser::cleanLine(const std::string& line)
                         result += '\xAB';
                     }
                     pendingDot = 0;
+                    dotSetByDigitMachine = false;
                 }                
                 else if (isPlusOperatorFound) // If the previous character was a plus operator and this cp is didgit append a plus operator before appending this didit
                 {
@@ -421,6 +492,13 @@ std::string Parser::cleanLine(const std::string& line)
                     result += ':';
                     isColonFound = false;
                 }
+                /*
+                    When dotSetByDigitMachine is false (alpha machine set it), a digit arriving should clear pendingDot without re-emitting:
+                 */
+                else if (pendingDot != 0 && !dotSetByDigitMachine) // If the previous character was a dot and it was not set by the digit machine
+                {
+                    pendingDot = 0; // alpha-set dot not followed by alpha, discard
+                }
                 
                 /*
                     Set unconditionally, covers both the normal digit case and the
@@ -438,9 +516,10 @@ std::string Parser::cleanLine(const std::string& line)
                 {                 
                     isColonFound = true;
                 }
-                else if (isDot(cp)) // If this code point (cp) is dot , reset isDigitFound and set isDotFound
+                else if (isDot(cp)) // If this code point (cp) is dot , reset isDigitFound and set pendingDot
                 {                                     
                     pendingDot = cp; // Store the dot
+                    dotSetByDigitMachine = true; // Set the flag
                 }
                                 
                 // Set unconditionally, whether cp was an operator (colon/plus) or
@@ -461,7 +540,17 @@ std::string Parser::cleanLine(const std::string& line)
                 */
                 isColonFound = false; // Reset the flag. This is the case when colon is not followed by a digit
                 isPlusOperatorFound = false; // Reset the flag. This is the case when plus operator is not followed by a digit
-                pendingDot = 0; // Reset the pending dot
+                if (dotSetByDigitMachine)
+                {
+                    pendingDot = 0; // Reset the pending dot
+                    dotSetByDigitMachine = false; // Reset the flag
+                }
+                else if (!isAlpha(cp) && !isDot(cp))    
+                {
+                    // Dot was set by alpha machine but next meaningful character
+                    // is not alpha — the dot is dangling, discard it.
+                    pendingDot = 0;
+                }
             }
         }
         /***********************************************************************************************************
@@ -487,6 +576,65 @@ std::string Parser::cleanLine(const std::string& line)
     return result;
 }
 
+/**
+ * Determines whether a Unicode code point is an alphabetic character
+ * for the purpose of the alpha-dot-alpha state machine.
+ *
+ * Recognizes two script groups:
+ *
+ *   Latin     A–Z  (U+0041–U+005A)
+ *             a–z  (U+0061–U+007A)
+ *
+ *   Urdu/Arabic     all code points accepted by isUrduLetter()
+ *                   see isUrduLetter() for the full range list
+ *
+ * This function is used to detect the alpha DOT alpha pattern that
+ * preserves dots in domain names and file extensions (urdu.com, data.csv).
+ * It intentionally excludes digits, diacritics, punctuation, and
+ * whitespace — those are handled by separate functions.
+ *
+ * Mixed-script dot preservation (e.g. Urdu word DOT Latin word) follows
+ * the same rule: if isALPHA returns true on both sides of the dot,
+ * the dot is preserved regardless of which script each side belongs to.
+ *
+ * @param cp  Unicode code point (32-bit value)
+ * @return    true if cp is a Latin or Urdu/Arabic letter, false otherwise
+ */
+bool Parser::isAlpha(char32_t cp)
+{
+    if ((cp >= U'A' && cp <= U'Z') || (cp >= U'a' && cp <= U'z'))
+        return true;
+
+    return isUrduLetter(cp);
+}
+
+
+/**
+ * Determines whether a Unicode code point is a decimal digit.
+ *
+ * Three digit systems appear in Urdu text and all three are recognized:
+ *
+ *   Western Arabic   U+0030–U+0039   0 1 2 3 4 5 6 7 8 9
+ *   Eastern Arabic   U+0660–U+0669   ٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩
+ *   Urdu (Extended)  U+06F0–U+06F9   ۰ ۱ ۲ ۳ ۴ ۵ ۶ ۷ ۸ ۹
+ *
+ * All three ranges are used by the digit-operator state machine to detect
+ * the digit-operator-digit pattern for colon (10:30), plus (۲+۳), and
+ * dot (3.14). A digit from any of the three systems on either side of an
+ * operator is sufficient to trigger preservation.
+ *
+ * Excluded intentionally:
+ *   - Arabic-Indic digits in other blocks (rare, not standard in Urdu)
+ *   - Superscript and subscript digits (U+2070–U+2079)
+ *   - Enclosed digits (U+2460 and similar)
+ *   - Full-width digits (U+FF10–U+FF19)
+ *   These do not appear in standard Urdu corpus text and are treated
+ *   as non-digits by this function.
+ *
+ * @param cp  Unicode code point (32-bit value)
+ * @return    true if cp is a decimal digit in any of the three recognized
+ *            systems, false otherwise
+ */
 bool Parser::isDigit(char32_t cp)
 {
     return (cp >= U'\u0030' && cp <= U'\u0039') || (cp >= U'\u0660' && cp <= U'\u0669') || (cp >= U'\u06F0' && cp <= U'\u06F9');
