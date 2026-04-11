@@ -1,10 +1,14 @@
 # naqsh — Urdu Text Parser
 
+[![Language](https://img.shields.io/badge/language-C%2B%2B17-blue)](https://isocpp.org/)
+[![Encoding](https://img.shields.io/badge/encoding-UTF--8-green)]()
+[![Status](https://img.shields.io/badge/status-under%20construction-orange)]()
+
 ---
 
 ## What is naqsh?
 
-**naqsh** (نقش) is a C++ library for reading, cleaning, and tokenizing Urdu text encoded in UTF-8.
+**naqsh** (نقش) is a C++ library for reading, cleaning, normalizing, and tokenizing Urdu text encoded in UTF-8.
 
 Urdu presents unique challenges for text processing: a right-to-left script built on Arabic with its own extended characters, invisible formatting characters like the Zero-Width Non-Joiner, mixed-script content (Urdu alongside digits and Latin), and multiple Unicode representations of the same letter. Most general-purpose parsers ignore these entirely. naqsh is built specifically around them.
 
@@ -29,6 +33,7 @@ A `static unordered_set<char32_t>` is built once from `PunctuationSymbols.hh` an
 - Latin punctuation: `.` `,` `:` `;` `!` `"` `(` `)` and more
 - Hyphens, dashes, ellipsis, curly quotes, angle quotes
 - Arabic-specific symbols: `٪` `٭` `؉` `؊`
+- Tatweel/Kashida `ـ` (U+0640) — a stretching character used for visual emphasis with no linguistic meaning
 - Additional separators and brackets
 
 The set is defined in `PunctuationSymbols.hh` and is straightforward to extend.
@@ -37,7 +42,7 @@ The set is defined in `PunctuationSymbols.hh` and is straightforward to extend.
 
 ZWNJ (`U+200C`) appears in Urdu text to control letter joining. naqsh handles two cases:
 
-- **Trailing ZWNJ** — silently removed (it is also in the punctuation set, so removal is automatic)
+- **Trailing ZWNJ** — silently removed
 - **ZWNJ between two Urdu letters** — replaced with a space, correctly splitting the display compound into two tokens
 
 ```
@@ -48,31 +53,68 @@ Zero-Width Joiner (`U+200D`) is intentionally left untouched — it signals that
 
 ### Operator preservation between digits
 
-Both `:` and `+` are in the punctuation set and would normally be stripped. A state machine detects the pattern `digit operator digit` and re-emits the operator, preserving time values and arithmetic expressions.
+`:`, `+`, `.`, and `٫` are in the punctuation set and would normally be stripped. A state machine detects the pattern `digit operator digit` and re-emits the operator, preserving time values, arithmetic expressions, and decimal numbers.
 
 ```
-10:30    →  10:30    (colon preserved)
-۲+۳      →  ۲+۳      (plus preserved)
-10+3+5   →  10+3+5   (chained plus preserved)
-10:30:45 →  10:30:45 (chained colons preserved)
-اردو:    →  اردو     (colon not between digits, stripped)
-10:abc   →  10 abc   (colon not followed by digit, stripped)
-10:+5    →  105      chained operators — both stripped, adjacent digits concatenate.
-                     Does not occur in real Urdu text.
-3.+2     →  32       same behaviour as 10:+5.
+10:30    →  10:30    colon preserved
+۲+۳      →  ۲+۳      plus preserved
+3.14     →  3.14     decimal dot preserved
+3٫14     →  3٫14     Arabic decimal separator preserved
+10+3+5   →  10+3+5   chained plus preserved
+اردو:    →  اردو     colon not between digits, stripped
+۱. آج    →  ۱ آج     ordinal dot not followed by digit, stripped
+Rs. 500  →  Rs 500   abbreviation dot not followed by digit, stripped
 ```
 
 All three digit systems are recognized: Western `0–9`, Eastern Arabic `٠–٩`, Urdu `۰–۹`.
 
-The two operator flags (`isColonFound`, `isPlusOperatorFound`) are mutually exclusive by construction. Adding support for a new operator requires one `else if` arm in the detection branch and one `else if` arm in the re-emit branch.
+### Dot preservation between alpha sequences
 
-### `isUrduLetter`
+A second state machine detects the pattern `alpha DOT alpha` and preserves the dot, enabling correct handling of domain names and file extensions in mixed Urdu text.
 
-A function that determines whether a Unicode code point is an Urdu letter. Exclusions are checked first (diacritics, digits, tatweel, ZWNJ/ZWJ, whitespace), then explicit letter ranges are tested. Covers:
+```
+urdu.com      →  urdu.com     alpha dot alpha, preserved
+www.urdu.com  →  www.urdu.com chained dots, preserved
+data.csv      →  data.csv     file extension, preserved
+Rs.500        →  Rs 500       alpha dot digit, dropped
+ver.2         →  ver 2        alpha dot digit, dropped
+```
 
-- Core Arabic block `U+0621–U+06FF` with precise range selection
-- Arabic Supplement block `U+0750–U+077F`
-- Explicitly excludes Latin letters, Eastern Arabic digits, Koranic diacritics, and tatweel
+The two machines share a single `pendingDot` slot with an ownership flag (`dotSetByDigitMachine`) to prevent them from incorrectly claiming each other's dot.
+
+### Unicode normalization
+
+A `normalize` function maps visually identical but code-point-distinct characters to a single canonical form before they are written to the output. Applied to every alpha character as it passes through the cleaner.
+
+**Letter normalization** — Arabic keyboards and Urdu keyboards produce different code points for the same letter:
+
+| Input | Canonical | Description |
+|---|---|---|
+| U+0643 `ك` | U+06A9 `ک` | Arabic kaf → Urdu keheh |
+| U+064A `ي` | U+06CC `ی` | Arabic yeh → Farsi yeh |
+| U+0647 `ه` | U+06C1 `ہ` | Arabic heh → heh goal |
+
+**Hamza normalization** — multiple alif forms collapsed to plain alif:
+
+| Input | Canonical | Description |
+|---|---|---|
+| U+0623 `أ` | U+0627 `ا` | Alif with hamza above |
+| U+0625 `إ` | U+0627 `ا` | Alif with hamza below |
+| U+0622 `آ` | U+0627 `ا` | Alif with madda |
+| U+0671 `ٱ` | U+0627 `ا` | Alif wasla |
+
+### Whitespace normalization
+
+`collapseSpace` runs as a post-processing step on the output of `cleanLine`. It collapses runs of consecutive whitespace characters to a single space and strips leading and trailing whitespace. Characters treated as whitespace:
+
+- U+0020 space
+- U+0009 tab
+- U+00A0 non-breaking space
+- U+061C Arabic letter mark
+
+### UTF-8 encoder
+
+`appendCodePoint` encodes any `char32_t` code point back to UTF-8 bytes and appends to a `std::string`. Used internally by the normalization path to emit the canonical form of a normalized character.
 
 ---
 
@@ -82,7 +124,8 @@ A function that determines whether a Unicode code point is an Urdu letter. Exclu
 naqsh/
 ├── header.hh                  ←  top-level include, pulls in both libraries
 └── lib/
-    ├── Parser.hh              ←  UTF-8 decoder, cleanLine, state machines
+    ├── Parser.hh              ←  UTF-8 decoder, cleanLine, state machines,
+    │                              normalization, collapseSpace
     └── PunctuationSymbols.hh  ←  Unicode code point definitions
 ```
 
@@ -123,17 +166,15 @@ g++ -std=c++17 -DCSV_PARSER_TOKEN_DELIMITER='\t' -o my_program main.cpp
 
 ## What naqsh wants to become
 
-naqsh is currently a cleaner. The goal is a full Urdu tokenizer API where the caller can iterate over lines and tokens the same way they would in any modern NLP pipeline.
+naqsh is currently a cleaner and normalizer. The goal is a full Urdu tokenizer API where the caller can iterate over lines and tokens the same way they would in any modern NLP pipeline.
 
 ### Phase 1 — Tokenization
 A `tokenize` method that returns a `std::vector<std::string>` of discrete tokens from a cleaned line. Consecutive spaces collapsed, empty tokens discarded, leading and trailing whitespace handled inside the library rather than pushed to the caller.
 
-### Phase 2 — Normalization
-Real Urdu text in the wild contains the same word in multiple Unicode representations. For example, `ک` can appear as U+06A9 (Urdu keheh) or U+0643 (Arabic kaf) — visually identical, different code points, different tokens without normalization. Phase 2 will address:
-
-- Urdu keheh vs Arabic kaf
-- Inconsistent hamza forms
+### Phase 2 — Extended normalization
 - Eastern Arabic digits vs Urdu digits for the same numeral
+- URL and domain name detection to preserve full URLs as single tokens rather than relying on the alpha-dot-alpha heuristic
+- Diacritic stripping as an optional mode — zabar, zer, pesh, shadda removed or preserved depending on caller preference
 
 ### Phase 3 — Document and line API
 
@@ -151,7 +192,7 @@ for (auto& line : doc.lines()) {
 ```
 
 ### Phase 4 — Token metadata
-- Diacritics (zabar, zer, pesh, shadda) separated from the base letter and accessible independently
+- Diacritics separated from the base letter and accessible independently
 - Token type classification: Urdu, Latin, Digit, Mixed, Punctuation
 - Original byte offset preserved so tokens can be mapped back to the source text
 
@@ -166,16 +207,19 @@ for (auto& line : doc.lines()) {
 | `static unordered_set` | Punctuation set built once, not per line |
 | Compile-time recovery policy | Caller decides how aggressive invalid-byte handling should be |
 | Exclusions before letter ranges in `isUrduLetter` | Guarantees non-letters are never accepted even if ranges are later widened |
-| State machines for ZWNJ, colon, and plus | These are contextual rules, they cannot be handled with a simple character lookup. Both operator flags are mutually exclusive, so adding a new operator is a localised two-line change |
+| State machines for ZWNJ, colon, plus, and dot | These are contextual rules — a simple character lookup cannot handle them |
+| `pendingDot` shared between digit and alpha machines | One ownership flag (`dotSetByDigitMachine`) makes the interaction explicit rather than relying on execution order |
+| `normalize` as a pure switch table | Adding a new normalization is a one-line change with no risk of affecting other code paths |
+| `collapseSpace` as a separate post-processing step | Keeps the main decode loop simple — whitespace normalization runs once on the finished string |
 
 ---
 
 ## Current limitations
 
 - `cleanLine` returns a cleaned `std::string` — it does not yet return a vector of tokens. The caller must still split on spaces.
-- No normalization yet — the same word can produce two different strings depending on which Unicode representation was used.
 - Method definitions live in `.hh` files. Including from multiple translation units will cause linker errors. This will be resolved when the library is split into `.hh`/`.cc` pairs.
 - No dictionary, morphology, or grammar — naqsh is a tokenizer, not an NLP framework.
+- URL detection uses an alpha-dot-alpha heuristic. Full URL preservation (`https://urdu.com`) is deferred to Phase 2.
 
 ---
 
@@ -187,7 +231,7 @@ The project is under active development. Issues and pull requests are welcome. I
 
 ## License
 
-This project is governed by a license, the details of which can be located in the accompanying file named 'LICENSE.' Please refer to this file for comprehensive information.
+This project is governed by a license, the details of which can be located in the accompanying file named 'LICENSE.'
 
 ---
 

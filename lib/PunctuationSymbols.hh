@@ -88,6 +88,10 @@ constexpr char32_t RIGHT_CURLY_BRACE     = U'\u007D'; // }
 constexpr char32_t ARABIC_THOUSANDS_SEPARATOR   = U'\u066C'; // ٬
 constexpr char32_t ARABIC_DECIMAL_SEPARATOR     = U'\u066B'; // ٫
 
+constexpr char32_t TATWEEL_OR_KASHIDA = U'\u0640'; // A stretching character used for visual emphasis. It carries no linguistic meaning and should be stripped.
+                                                   // It is already part of isUrduLetter(). 
+                                                   // It should be part of ALL_PUNCTUATION set, so it optionally should not pass through the cleaner untouched and corrupt tokens.
+                                                   // lib/normalization.md for more detail
 
 // Optional: an array of all punctuation code points for iteration
 constexpr char32_t ALL_PUNCTUATION[] = {
@@ -134,6 +138,7 @@ constexpr char32_t ALL_PUNCTUATION[] = {
     RIGHT_CURLY_BRACE,
     ARABIC_THOUSANDS_SEPARATOR,
     ARABIC_DECIMAL_SEPARATOR,
+    TATWEEL_OR_KASHIDA, // Part of normalization process, this point code is already part of isUrduLetter(). For more dedtail please go through lib/normalization.md file
 };
 
 constexpr size_t NUM_PUNCTUATION_SYMBOLS = sizeof(ALL_PUNCTUATION) / sizeof(ALL_PUNCTUATION[0]);

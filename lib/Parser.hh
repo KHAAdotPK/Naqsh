@@ -52,12 +52,15 @@ class Parser
         Parser(void);
         ~Parser(void);
 
+        void appendCodePoint(std::string&, char32_t); // Append the code point to the result
         std::string cleanLine(const std::string&); // Clean the line by removing punctuation and other characters
+        std::string collapseSpace(const std::string&); // 
         bool isAlpha(char32_t); // Check if the code point is an alphabet
         bool isDigit(char32_t); // Check if the code point is a digit
         bool isDot(char32_t); // Check if the code point is a dot
         bool isTokenDelimiter(char32_t); // Check if the code point is a token delimiter
-        bool isUrduLetter(char32_t); // Check if the code point is an Urdu letter        
+        bool isUrduLetter(char32_t); // Check if the code point is an Urdu letter 
+        char32_t normalize(char32_t); // Normalize the code point       
 };
 
 Parser::Parser(void)
@@ -66,6 +69,32 @@ Parser::Parser(void)
 
 Parser::~Parser(void)
 {    
+}
+
+void Parser::appendCodePoint(std::string& result, char32_t cp)
+{
+    if (cp <= 0x7F) // 1-byte ASCII, 7-bit non-extended ASCII [ 01111111 ]
+    {
+        result += (char)cp; // It's just a single byte and it's endianness doesn't matter
+    }
+    else if (cp <= 0x7FF) // 2-byte, 11-bit [ 10xxxxxx 110xxxxx ] 
+    {
+        result += (char)(0xC0 | (cp >> 6)); // 110xxxxx // Most significant bits to least significant bits 
+        result += (char)(0x80 | (cp & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+    }
+    else if (cp <= 0xFFFF) // 3-byte, 16-bit [ 10xxxxxx 10xxxxxx 1110xxxx ]
+    {
+        result += (char)(0xE0 | (cp >> 12)); // 1110xxxx // Most significant bits to least significant bits 
+        result += (char)(0x80 | ((cp >> 6) & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+        result += (char)(0x80 | (cp & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+    }
+    else // 4-byte, 21-bit [ 10xxxxxx 10xxxxxx 10xxxxxx 11110xxx ]
+    {
+        result += (char)(0xF0 | (cp >> 18)); // 11110xxx // Most significant bits to least significant bits 
+        result += (char)(0x80 | ((cp >> 12) & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+        result += (char)(0x80 | ((cp >> 6) & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+        result += (char)(0x80 | (cp & 0x3F)); // 10xxxxxx // Least significant bits to most significant bits 
+    }
 }
 
 std::string Parser::cleanLine(const std::string& line)
@@ -283,7 +312,7 @@ std::string Parser::cleanLine(const std::string& line)
         if (validUTF8Sequence)
         {
             if (isAlpha(cp)) // If the current character is an alphabet
-            {
+            { 
                 if (pendingDot != 0) // If the previous character was a dot
                 {
                     if (!dotSetByDigitMachine) // If the dot was not set by the digit machine
@@ -302,6 +331,16 @@ std::string Parser::cleanLine(const std::string& line)
                         pendingDot = 0;
                     }
                 }
+
+                char32_t normalized = normalize(cp);
+
+                if (normalized != cp)
+                {
+                    // emit normalized UTF-8 bytes
+                    appendCodePoint(result, normalized);
+                    skip = true;
+                }
+
                 isAlphaFound = true;            
             }
             else if (isAlphaFound) // If the previous iteration was an Alphabet
@@ -573,7 +612,86 @@ std::string Parser::cleanLine(const std::string& line)
         validUTF8Sequence = true; // All sequences are valid untill proven otherwise
                 
     } // End of while loop
-    return result;
+
+    /* 
+        Step 4. of Normalization. Multiple consecutive spaces, tabs mixed with spaces, non-breaking space U+00A0, and Arabic letter mark U+061C all need to collapse to a single space.
+        Post-processing step on the result string of cleanLine()
+     */   
+    return collapseSpace (result);
+}
+
+/*
+    Step 4. of Normalization. Multiple consecutive spaces, tabs mixed with spaces, non-breaking space U+00A0, and Arabic letter mark U+061C all need to collapse to a single space.
+    Post-processing step on the result string of cleanLine()
+
+    Example:
+        Input: "  Hello   World\t\n"
+        Output: "Hello World"
+ */
+std::string Parser::collapseSpace(const std::string& result) 
+{
+    /*
+        Post-processing: collapse whitespace runs
+        =========================================
+        Multiple consecutive spaces, tabs, non-breaking spaces (U+00A0),
+        and Arabic letter marks (U+061C) are collapsed to a single space.
+        Leading and trailing whitespace is stripped.
+
+        All four characters are treated as whitespace for this purpose:
+            U+0020  SPACE
+            U+0009  TAB
+            U+00A0  NO-BREAK SPACE        (UTF-8: 0xC2 0xA0)
+            U+061C  ARABIC LETTER MARK    (UTF-8: 0xD8 0x9C)
+     */
+    
+    std::string collapsed;
+    collapsed.reserve(result.size());
+    bool inWhitespace = false;
+
+    size_t k = 0;
+    while (k < result.size())
+    {
+        // Decode one UTF-8 code point from result
+        char32_t cp2 = 0;
+        unsigned char b = result[k];
+        size_t seqLen = 0;
+
+        if ((b & 0x80) == 0x00)      { cp2 = b;        seqLen = 1; }
+        else if ((b & 0xE0) == 0xC0) { cp2 = b & 0x1F; seqLen = 2; }
+        else if ((b & 0xF0) == 0xE0) { cp2 = b & 0x0F; seqLen = 3; }
+        else if ((b & 0xF8) == 0xF0) { cp2 = b & 0x07; seqLen = 4; }
+        else                         { ++k; continue; } // invalid byte, skip
+
+        for (size_t m = 1; m < seqLen; ++m)
+        {
+            if (k + m >= result.size()) { seqLen = m; break; }
+            cp2 = (cp2 << 6) | (result[k + m] & 0x3F);
+        }
+
+        // Check if this code point is whitespace
+        bool isWS = (cp2 == 0x0020 ||   // space
+                     cp2 == 0x0009 ||   // tab
+                     cp2 == 0x00A0 ||   // non-breaking space
+                     cp2 == 0x061C);    // Arabic letter mark
+
+        if (isWS)
+        {
+            inWhitespace = true;
+        }
+        else
+        {
+            if (inWhitespace && !collapsed.empty())
+            {
+                collapsed += ' ';   // emit single space for the whole run
+            }
+            inWhitespace = false;
+            collapsed.append(result, k, seqLen);
+        }
+
+        k += seqLen;
+    }
+
+    return std::move(collapsed);
 }
 
 /**
@@ -851,6 +969,51 @@ bool Parser::isUrduLetter(char32_t cp)
     // 6. DEFAULT
     // ============================================================
     return false;
+}
+
+/*
+ * Returns the normalized code point for a given Urdu/Arabic letter.
+ * If no normalization is needed, returns cp unchanged.
+ *
+ * Normalizations applied:
+ *   U+0643  Arabic kaf      →  U+06A9  Urdu keheh
+ *   U+064A  Arabic yeh      →  U+06CC  Farsi yeh
+ *   U+0647  Arabic heh      →  U+06C1  heh goal
+ *   U+0623  Alif + hamza    →  U+0627  plain alif
+ *   U+0625  Alif + hamza    →  U+0627  plain alif
+ *   U+0622  Alif + madda    →  U+0627  plain alif
+ *   U+0671  Alif wasla      →  U+0627  plain alif
+ */
+char32_t Parser::normalize(char32_t cp)
+{
+    switch (cp)
+    {
+        /*
+            1. Unicode character normalization for the same Urdu letter
+            Arabic keyboards and Urdu keyboards produce different code points for visually identical letters. Real corpus text has both
+         */
+        case 0x0643: return 0x06A9;  // Arabic kaf     → Urdu keheh
+        case 0x064A: return 0x06CC;  // Arabic yeh     → Farsi yeh
+        case 0x0647: return 0x06C1;  // Arabic heh     → heh goal
+
+        /*
+            2. Hamza normalization
+         */
+        case 0x0623: return 0x0627;  // Alif + hamza above → plain alif
+        case 0x0625: return 0x0627;  // Alif + hamza below → plain alif
+        case 0x0622: return 0x0627;  // Alif + madda   → plain alif
+        case 0x0671: return 0x0627;  // Alif wasla     → plain alif
+
+        /*
+            3. Tatweel / Kashida removal. This takes place through ALL_PUNCTUATION array
+         */
+        
+        /*
+
+         */ 
+
+        default:     return cp;      // no normalization needed
+    }
 }
 
 #endif // CSV_PARSER_LIB_PARSER_HH
