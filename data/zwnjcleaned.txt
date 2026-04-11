@@ -1,6 +1,0 @@
-id textlabel urdutext notes
-1 ZWNJExample1 خوب صورت ZWNJ between خوب and صورت
-2 ZWNJExample2 دیکھا جائے ZWNJ between دیکھا and جائے
-3 ZWNJExample3 نہیں تو ZWNJ between نہیں and تو
-4 ZWNJExample4 کبھی نہیں ZWNJ between کبھی and نہیں
-5 ZWNJExample5 کیا ہے ZWNJ between کیا and ہے

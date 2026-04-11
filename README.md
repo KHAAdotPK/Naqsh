@@ -100,7 +100,7 @@ A `normalize` function maps visually identical but code-point-distinct character
 |---|---|---|
 | U+0623 `أ` | U+0627 `ا` | Alif with hamza above |
 | U+0625 `إ` | U+0627 `ا` | Alif with hamza below |
-| U+0622 `آ` | U+0627 `ا` | Alif with madda |
+~~| U+0622 `آ` | U+0627 `ا` | Alif with madda |~~
 | U+0671 `ٱ` | U+0627 `ا` | Alif wasla |
 
 ### Whitespace normalization
