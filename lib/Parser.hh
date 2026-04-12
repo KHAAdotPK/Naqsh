@@ -620,13 +620,44 @@ std::string Parser::cleanLine(const std::string& line)
     return collapseSpace (result);
 }
 
-/*
-    Step 4. of Normalization. Multiple consecutive spaces, tabs mixed with spaces, non-breaking space U+00A0, and Arabic letter mark U+061C all need to collapse to a single space.
-    Post-processing step on the result string of cleanLine()
-
-    Example:
-        Input: "  Hello   World\t\n"
-        Output: "Hello World"
+/**
+ * Collapses runs of whitespace in a UTF-8 string to a single space
+ * and strips leading and trailing whitespace.
+ *
+ * This is a post-processing step applied to the output of cleanLine().
+ * By the time this function runs, punctuation has been removed and
+ * operators have been re-emitted, so the only remaining cleanup needed
+ * is whitespace normalization.
+ *
+ * Four code points are treated as whitespace:
+ *
+ *   U+0020  SPACE              — standard ASCII space
+ *   U+0009  TAB                — horizontal tab
+ *   U+00A0  NO-BREAK SPACE     — non-breaking space (UTF-8: 0xC2 0xA0)
+ *                                common in copy-pasted web text
+ *   U+061C  ARABIC LETTER MARK — invisible RTL/LTR directional mark
+ *                                (UTF-8: 0xD8 0x9C), appears in some
+ *                                Urdu editors and word processors
+ *
+ * Behaviour:
+ *   - Any run of one or more whitespace code points is replaced by a
+ *     single ASCII space U+0020
+ *   - Leading whitespace is stripped entirely (the !collapsed.empty()
+ *     guard suppresses the space emission before the first non-whitespace
+ *     character)
+ *   - Trailing whitespace is stripped entirely (inWhitespace being true
+ *     at end-of-string means nothing was appended for that final run)
+ *   - Invalid UTF-8 bytes are skipped silently, consistent with the
+ *     policy of the main decoder in cleanLine()
+ *
+ * Examples:
+ *   "  Hello   World\t"  →  "Hello World"
+ *   "\tیہ   اردو   ہے"   →  "یہ اردو ہے"
+ *   "urdu.com  "         →  "urdu.com"
+ *
+ * @param result  UTF-8 encoded string, typically the output of cleanLine()
+ * @return        A new string with whitespace runs collapsed and
+ *                leading/trailing whitespace removed
  */
 std::string Parser::collapseSpace(const std::string& result) 
 {
@@ -981,7 +1012,7 @@ bool Parser::isUrduLetter(char32_t cp)
  *   U+0647  Arabic heh      →  U+06C1  heh goal
  *   U+0623  Alif + hamza    →  U+0627  plain alif
  *   U+0625  Alif + hamza    →  U+0627  plain alif
- *   U+0622  Alif + madda    →  U+0627  plain alif
+ *   //U+0622  Alif + madda    →  U+0627  plain alif
  *   U+0671  Alif wasla      →  U+0627  plain alif
  */
 char32_t Parser::normalize(char32_t cp)
@@ -1001,18 +1032,21 @@ char32_t Parser::normalize(char32_t cp)
          */
         case 0x0623: return 0x0627;  // Alif + hamza above → plain alif
         case 0x0625: return 0x0627;  // Alif + hamza below → plain alif
-        case 0x0622: return 0x0627;  // Alif + madda   → plain alif
+        /* 
+            U+0622 is Alif with madda, the madda is part of the word's pronunciation. The madda indicates a long vowel sound that changes the word's identity
+            The normalization for U+0622 as 0x0627 is too aggressive
+         */    
+        // case 0x0622: return 0x0627;  // Alif + madda   → plain alif 
         case 0x0671: return 0x0627;  // Alif wasla     → plain alif
+        default:     return cp;      // no normalization needed
 
         /*
             3. Tatweel / Kashida removal. This takes place through ALL_PUNCTUATION array
          */
         
         /*
-
-         */ 
-
-        default:     return cp;      // no normalization needed
+            4. Whitespace normalization, method collapseSpace() handles this
+         */         
     }
 }
 
