@@ -230,6 +230,14 @@ for (auto& line : doc.lines()) {
 - Method definitions live in `.hh` files. Including from multiple translation units will cause linker errors. This will be resolved when the library is split into `.hh`/`.cc` pairs.
 - No dictionary, morphology, or grammar — naqsh is a tokenizer, not an NLP framework.
 - URL detection uses an alpha-dot-alpha heuristic. Full URL preservation (`https://urdu.com`) is deferred to Phase 2.
+- Religious and honorific ligatures (U+FDFA `ﷺ`, U+FDFB `ﷻ`, U+FDF2 `ﷲ`,
+  and approximately 60 similar code points in the Arabic Presentation Forms
+  block U+FB50–U+FDFF) are passed through untouched as single opaque tokens.
+  naqsh is designed for general Urdu NLP pipelines — news, literature,
+  legal and government text — where these ligatures do not appear in
+  significant quantities. Corpora containing religious text require a
+  domain-specific pre-processing layer before calling `cleanLine()`.
+  See the comment block in `normalize()` for the full list and rationale.
 
 ---
 

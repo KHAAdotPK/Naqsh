@@ -1116,6 +1116,61 @@ char32_t Parser::normalize(char32_t cp)
         case 0x0667: return 0x06F7;  // ٧ → ۷
         case 0x0668: return 0x06F8;  // ٨ → ۸
         case 0x0669: return 0x06F9;  // ٩ → ۹
+
+        /*
+            6. Ligature decomposition
+            U+FDFA and similar ligatures. These are single code points that represent entire phrases. 
+            A tokenizer will treat them as one token which is arguably correct. Decomposing them is an advanced normalization step.
+            The Unicode character U+FDFA represents the Arabic honorific ligature "salla llahu alayhi wa sallam"
+            (peace be upon him).
+
+            // Common Religious Ligatures
+            U+FDFA →  represents the Arabic honorific ligature "salla llahu alayhi wa sallam"
+            U+FDFB →  represents the Arabic honorific "bismillah"
+            U+FDFD →  represents the Arabic honorific "jalla jalaluhu"
+            U+FDFE →  represents the Arabic honorific "sallallahu alayhi wa sallam"
+            U+FDFF →  represents the Arabic honorific "sallallahu alayhi wa sallam"
+            U+FDF2 →  represents the Arabic word "Allah"
+            U+FDF4 →  represents the Arabic word "Muhammad"
+            U+FDFE →  represents the Arabic honorific "sallallahu Ta'ala"
+
+            // Honorific Symbols for Companions & Figures
+            U+0613 →  represents the Radi Allahu Anhu
+            U+0611 →  represents the Alayhis Salam 
+            U+0612 →  represents the Rahmatullah Alayh
+
+            There are approximately 60–70 code points in this range covering
+            religious honorifics, common Arabic words, and calligraphic ligatures.
+
+            Why naqsh does not handle these
+            ---------------------------------
+            naqsh is designed for professional NLP pipelines processing general
+            Urdu text; news, literature, government documents, social media, legal text. 
+            Such corpora do not contain these ligatures in significant
+            quantities. Religious text corpora are a specialized domain and require
+            their own purpose-built normalization layer that understands the
+            theological and orthographic conventions of that domain.
+
+            Decomposing U+FDFA into its constituent letters, for example, is not
+            a mechanical operation, it requires knowing the canonical Arabic
+            spelling of the honorific, deciding whether to include vowel marks,
+            and choosing between multiple valid transliteration conventions. These
+            are domain decisions, not character normalization decisions.
+
+            What happens to these code points in naqsh
+            -------------------------------------------
+            They are not in ALL_PUNCTUATION, not in isUrduLetter(), and not in
+            normalize(). They pass through cleanLine() untouched as single opaque
+            code points. The tokenizer (Phase 1) will treat each one as a single
+            token. This is the correct behaviour for a general-purpose pipeline.
+            The token is present and intact, and downstream models can handle or
+            filter it as appropriate.
+
+            If your corpus contains religious ligatures and you need to decompose
+            them, implement a pre-processing step before calling cleanLine() that
+            maps each ligature code point to its expanded form. Do not rely on
+            naqsh to do this.
+         */
         
         
         default:     return cp; // no normalization needed
