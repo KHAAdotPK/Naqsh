@@ -82,11 +82,14 @@
 */
 
 // Dependencies
-#include "./lib/hash/header.hh"
+#include "./lib/Hash/header.hh"
+
+// Source Files
 #include "./lib/src/PunctuationSymbols.hh"
 #include "./lib/src/Cleaner.hh"
-#include "./lib/parser/header.hh"
 
+// Dependencies
+#include "./lib/Parser/header.hh"
 
 // Source Files
 //#include "./lib/src/WordRecord.hh"

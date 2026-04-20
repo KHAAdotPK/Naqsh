@@ -23,4 +23,4 @@ rem /O2         : Optimize for maximum speed
 rem /Zi         : Generate diagnostic/debug info (useful with ASAN)
 rem /fsanitize=address : Address sanitizer
 
-cl.exe /nologo /std:c++17 /W4 /WX /EHsc /sdl /O2 /Zi /fsanitize=address %DEVICE_FLAG% /DITERATOR_GUARD_AGAINST_EMPTY_STRING main.cpp /Femain.exe
+cl.exe /nologo /std:c++17 /W4 /WX /EHsc /sdl /O2 /Zi /fsanitize=address %DEVICE_FLAG% /DITERATOR_GUARD_AGAINST_EMPTY_STRING /DITERATOR_USER_DEFINED_CLEANER_CODE main.cpp /Femain.exe
