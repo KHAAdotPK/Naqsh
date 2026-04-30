@@ -27,14 +27,8 @@
 #ifndef NAQSH_LIB_NAQSH_HEADER_HH
 #define NAQSH_LIB_NAQSH_HEADER_HH
 
-#include <cstdint>
-#include <iostream>
-#include <fstream>
 #include <string>
 #include <unordered_set>
-#include <vector>
-#include <sstream>
-#include <iterator>
 
 /*
     Token Delimiter
