@@ -24,8 +24,8 @@
         g++ -std=c++17 -DDROP_INVALID_UTF8_SEQUENCE -o my_program main.cpp
 */
 
-#ifndef CSV_PARSER_LIB_HEADER_HH
-#define CSV_PARSER_LIB_HEADER_HH
+#ifndef NAQSH_LIB_NAQSH_HEADER_HH
+#define NAQSH_LIB_NAQSH_HEADER_HH
 
 #include <cstdint>
 #include <iostream>
@@ -81,29 +81,7 @@
 #define UTF_8_SUBSIQUENT_BYTE_LEFT_SHIFT 6
 */
 
-// Dependencies
-#include "./lib/Hash/header.hh"
-
-// Source Files
 #include "./lib/src/PunctuationSymbols.hh"
 #include "./lib/src/Cleaner.hh"
 
-// Dependencies
-#include "./lib/Parser/header.hh"
-
-// Source Files
-//#include "./lib/src/WordRecord.hh"
-/*#include "./lib/parser/WordRecord.hh"*/
-/*
-#include "./lib/src/PunctuationSymbols.hh"
-#include "./lib/src/Cleaner.hh"
-*/
-//#include "./lib/src/Iterator.hh"
-/*#include "./lib/parser/Iterator.hh"*/
-//#include "./lib/src/Parser.hh"
-
-/*#include "./lib/parser/Parser.hh"*/
-
-//#include "./lib/parser/header.hh"
-
-#endif // CSV_PARSER_LIB_HEADER_HH
+#endif // NAQSH_LIB_NAQSH_HEADER_HH

@@ -1,5 +1,5 @@
 /*
-    src/main.hh
+    usage/main.hh
     Q@hackers.pk
  */
 

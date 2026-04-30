@@ -1,5 +1,5 @@
 /*
-    lib/Cleaner.hh
+    lib/src/Cleaner.hh
     Q@hackers.pk
  */
 

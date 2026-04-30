@@ -1,9 +1,9 @@
 /*
-    src/main.cpp
+    usage/main.cpp
     Q@hackers.pk
  */
 
-#include "main.hh"
+#include "./main.hh"
 
 int main(int argc, char* argv[]) {
     

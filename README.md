@@ -1,4 +1,4 @@
-# naqsh — Urdu Text Parser
+# Naqsh — Urdu Text Cleaner and Normalizer
 
 [![Language](https://img.shields.io/badge/language-C%2B%2B17-blue)](https://isocpp.org/)
 [![Encoding](https://img.shields.io/badge/encoding-UTF--8-green)]()
@@ -6,21 +6,114 @@
 
 ---
 
-## What is naqsh?
+## What is Naqsh?
 
-**naqsh** (نقش) is a C++ library for reading, cleaning, normalizing, and tokenizing Urdu text encoded in UTF-8.
+**Naqsh** (نقش) is a C++ library for cleaning and normalizing Urdu text encoded in UTF-8.
 
-Urdu presents unique challenges for text processing: a right-to-left script built on Arabic with its own extended characters, invisible formatting characters like the Zero-Width Non-Joiner, mixed-script content (Urdu alongside digits and Latin), and multiple Unicode representations of the same letter. Most general-purpose parsers ignore these entirely. naqsh is built specifically around them.
+Urdu presents unique challenges for text processing: a right-to-left script built on Arabic with its own extended characters, invisible formatting characters like the Zero-Width Non-Joiner, mixed-script content (Urdu alongside digits and Latin), and multiple Unicode representations of the same letter. Most general-purpose parsers ignore these entirely. Naqsh is built specifically around them.
+
+Naqsh is **not** a standalone tokenizer or parser. It is designed to be used as an optional cleaning hook for the [Parser](https://github.com/KHAAdotPK/Parser.git) package — it cleans and normalizes each line before Parser's `Iterator` splits it into tokens. For English text, the equivalent package is [imprint](https://github.com/KHAAdotPK/imprint.git).
 
 The name comes from the Urdu/Persian word نقش — meaning *pattern* or *imprint*.
 
 ---
 
-## What it does right now
+## How It Integrates with Parser
+
+Inside Parser's `Iterator.hh`, the cleaning step is guarded by a preprocessor macro:
+
+```cpp
+#ifdef ITERATOR_USER_DEFINED_CLEANER_CODE
+    Cleaner cleaner;
+#endif
+
+if (std::getline(*_stream, line))
+{
+#ifdef ITERATOR_USER_DEFINED_CLEANER_CODE
+    line = cleaner.cleanLine(line);
+#endif
+    // ... tokenize line ...
+}
+```
+
+For `Cleaner` to be in scope when `Iterator.hh` compiles, **Naqsh must be included before Parser** in your entry point. The macro must also be defined before either header is pulled in.
+
+```cpp
+// In your main.hh or entry point
+
+#define ITERATOR_USER_DEFINED_CLEANER_CODE   // activates cleaning in Iterator
+
+#include "../lib/Naqsh/header.hh"            // brings Cleaner into scope
+#include "../lib/Parser/header.hh"           // Iterator now sees Cleaner
+```
+
+If `ITERATOR_USER_DEFINED_CLEANER_CODE` is not defined, Parser works as normal and Naqsh is never referenced — there is no overhead or side effect.
+
+---
+
+## Usage
+
+```cpp
+// main.hh
+
+#ifdef CSV_PARSER_TOKEN_DELIMITER
+#undef CSV_PARSER_TOKEN_DELIMITER
+#endif
+#define CSV_PARSER_TOKEN_DELIMITER ' '
+
+#ifndef ITERATOR_GUARD_AGAINST_EMPTY_STRING
+#define ITERATOR_GUARD_AGAINST_EMPTY_STRING
+#endif
+
+#ifndef ITERATOR_USER_DEFINED_CLEANER_CODE
+#define ITERATOR_USER_DEFINED_CLEANER_CODE
+#endif
+
+// Include order matters — Naqsh before Parser
+#include "../lib/Hash/header.hh"
+#include "../lib/Naqsh/header.hh"    // Cleaner must be in scope before Parser
+#include "../lib/Parser/header.hh"
+```
+
+With this setup, every line read by Parser's `Iterator` is passed through Naqsh's `Cleaner::cleanLine()` before being split into tokens.
+
+`cleanLine` can also be called directly if you need to clean a line independently:
+
+```cpp
+Cleaner cleaner;
+
+std::string line = "اسلام علیکم! آج کا دن 10:30 بجے شروع ہوا۔";
+std::string cleaned = cleaner.cleanLine(line);
+
+// result: "اسلام علیکم آج کا دن 10:30 بجے شروع ہوا"
+```
+
+### Compiling
+
+```bash
+# Standard mode — Unicode §3.9 recovery (recommended)
+g++ -std=c++17 -o my_program main.cpp
+
+# Drop mode — discard entire invalid UTF-8 sequence
+g++ -std=c++17 -DDROP_INVALID_UTF8_SEQUENCE -o my_program main.cpp
+
+# Enable religious ligature normalization
+g++ -std=c++17 -DNORMALIZE_RELIGIOUS_LIGATURES -o my_program main.cpp
+
+# Custom token delimiter (default is comma)
+g++ -std=c++17 -DCSV_PARSER_TOKEN_DELIMITER='\t' -o my_program main.cpp
+
+# Combined example
+g++ -std=c++17 -DNORMALIZE_RELIGIOUS_LIGATURES -DDROP_INVALID_UTF8_SEQUENCE -o my_program main.cpp
+```
+
+---
+
+## What it does
 
 ### Hand-rolled UTF-8 decoder
 
-naqsh decodes UTF-8 byte sequences manually, one code point at a time, without relying on any external library. It understands the full 1–4 byte structure and handles malformed input through one of two compile-time policies:
+Naqsh decodes UTF-8 byte sequences manually, one code point at a time, without relying on any external library. It understands the full 1–4 byte structure and handles malformed input through one of two compile-time policies:
 
 - **`DROP_INVALID_UTF8_SEQUENCE`** — the entire claimed sequence is discarded when any continuation byte is invalid. Aggressive but simple.
 - **Default (no flag)** — follows Unicode §3.9 maximal-subpart recovery: only the lead byte is discarded, and the offending byte is re-examined as the start of a new sequence. This means a valid ASCII character immediately following a bad lead byte is never lost.
@@ -40,7 +133,7 @@ The set is defined in `PunctuationSymbols.hh` and is straightforward to extend.
 
 ### Zero-Width Non-Joiner (ZWNJ) handling
 
-ZWNJ (`U+200C`) appears in Urdu text to control letter joining. naqsh handles two cases:
+ZWNJ (`U+200C`) appears in Urdu text to control letter joining. Naqsh handles two cases:
 
 - **Trailing ZWNJ** — silently removed
 - **ZWNJ between two Urdu letters** — replaced with a space, correctly splitting the display compound into two tokens
@@ -112,6 +205,18 @@ U+0622 `آ` (Alif with madda) is intentionally excluded — the madda indicates 
 
 Digit normalization is applied inside the digit state machine so that operator preservation and normalization work correctly together — `٣٫١٤` becomes `۳٫۱۴` with the decimal separator intact.
 
+### Religious ligature normalization
+
+Arabic Presentation Forms (U+FB50–U+FDFF) contain precomposed ligatures for religious phrases and honorifics such as `ﷺ` (U+FDFA), `ﷻ` (U+FDFB), and `ﷲ` (U+FDF2). By default Naqsh passes these through untouched as single opaque tokens, since they are rare in general Urdu NLP corpora (news, literature, legal and government text).
+
+When processing religious corpora where these ligatures appear frequently, enable expansion with:
+
+```bash
+g++ -std=c++17 -DNORMALIZE_RELIGIOUS_LIGATURES -o my_program main.cpp
+```
+
+See the comment block in `normalize()` for the full list of affected code points and their expansions.
+
 ### Whitespace normalization
 
 `collapseSpace` runs as a post-processing step on the output of `cleanLine`. It collapses runs of consecutive whitespace characters to a single space and strips leading and trailing whitespace. Characters treated as whitespace:
@@ -130,9 +235,9 @@ Digit normalization is applied inside the digit state machine so that operator p
 ## File structure
 
 ```
-naqsh/
+Naqsh/
 ├── header.hh                  ←  top-level include, pulls in both libraries
-└── lib/
+└── lib/src
     ├── Cleaner.hh             ←  UTF-8 decoder, cleanLine, state machines,
     │                              normalization, collapseSpace
     └── PunctuationSymbols.hh  ←  Unicode code point definitions
@@ -140,69 +245,15 @@ naqsh/
 
 ---
 
-## Usage
+## Compile-Time Macros
 
-```cpp
-#include "header.hh"
-
-int main()
-{
-    Cleaner cleaner;
-
-    std::string line = "اسلام علیکم! آج کا دن 10:30 بجے شروع ہوا۔";
-    std::string cleaned = cleaner.cleanLine(line);
-
-    // result: "اسلام علیکم آج کا دن 10:30 بجے شروع ہوا"
-
-    return 0;
-}
-```
-
-### Compiling
-
-```bash
-# Standard mode — Unicode §3.9 recovery (recommended)
-g++ -std=c++17 -o my_program main.cpp
-
-# Drop mode — discard entire invalid sequence
-g++ -std=c++17 -DDROP_INVALID_UTF8_SEQUENCE -o my_program main.cpp
-
-# Custom delimiter (default is comma)
-g++ -std=c++17 -DCSV_PARSER_TOKEN_DELIMITER='\t' -o my_program main.cpp
-```
-
----
-
-## What naqsh wants to become
-
-naqsh is currently a cleaner and normalizer. The goal is a full Urdu tokenizer API where the caller can iterate over lines and tokens the same way they would in any modern NLP pipeline.
-
-### Phase 1 — Tokenization
-A `tokenize` method that returns a `std::vector<std::string>` of discrete tokens from a cleaned line. Consecutive spaces collapsed, empty tokens discarded, leading and trailing whitespace handled inside the library rather than pushed to the caller.
-
-### Phase 2 — Extended normalization
-- URL and domain name detection to preserve full URLs as single tokens rather than relying on the alpha-dot-alpha heuristic
-- Diacritic stripping as an optional mode — zabar, zer, pesh, shadda removed or preserved depending on caller preference
-
-### Phase 3 — Document and line API
-
-```cpp
-// Conceptual future interface
-Document doc("urdu_corpus.txt");
-
-for (auto& line : doc.lines()) {
-    for (auto& token : line.tokens()) {
-        std::cout << token.text()       << "\n";  // token text
-        std::cout << token.byteOffset() << "\n";  // position in original
-        std::cout << token.type()       << "\n";  // Urdu / Latin / Digit / Mixed
-    }
-}
-```
-
-### Phase 4 — Token metadata
-- Diacritics separated from the base letter and accessible independently
-- Token type classification: Urdu, Latin, Digit, Mixed, Punctuation
-- Original byte offset preserved so tokens can be mapped back to the source text
+| Macro | Package | Effect |
+|---|---|---|
+| `ITERATOR_USER_DEFINED_CLEANER_CODE` | Parser / Naqsh | Activates `Cleaner::cleanLine()` inside `Iterator::read_next()` |
+| `DROP_INVALID_UTF8_SEQUENCE` | Naqsh | Discard entire invalid UTF-8 sequence instead of single lead byte |
+| `NORMALIZE_RELIGIOUS_LIGATURES` | Naqsh | Expands Arabic Presentation Forms ligatures (U+FB50–U+FDFF) to constituent letters. Off by default — enable only for religious corpora |
+| `CSV_PARSER_TOKEN_DELIMITER` | Naqsh / Parser | Token delimiter character — defaults to `','` in Naqsh's `header.hh`; override before including if a different delimiter is needed |
+| `ITERATOR_GUARD_AGAINST_EMPTY_STRING` | Parser | Skips empty tokens after splitting |
 
 ---
 
@@ -214,10 +265,11 @@ for (auto& line : doc.lines()) {
 | `char32_t` code points | Correct comparison for multi-byte Urdu characters |
 | `static unordered_set` | Punctuation set built once, not per line |
 | Compile-time recovery policy | Caller decides how aggressive invalid-byte handling should be |
+| `NORMALIZE_RELIGIOUS_LIGATURES` off by default | Naqsh targets general Urdu NLP pipelines where these code points are rare |
 | Exclusions before letter ranges in `isUrduLetter` | Guarantees non-letters are never accepted even if ranges are later widened |
 | State machines for ZWNJ, colon, plus, and dot | These are contextual rules — a simple character lookup cannot handle them |
 | `pendingDot` shared between digit and alpha machines | One ownership flag (`dotSetByDigitMachine`) makes the interaction explicit rather than relying on execution order |
-| Digit normalization inside the digit state machine | Ensures operator preservation and normalization work in the correct order — the operator is re-emitted before the normalized digit is appended |
+| Digit normalization inside the digit state machine | Ensures operator preservation and normalization work in the correct order |
 | `normalize` as a pure switch table | Adding a new normalization is a one-line change with no risk of affecting other code paths |
 | U+0622 excluded from hamza normalization | Alif with madda is a distinct phoneme in Urdu — collapsing it to plain alif produces non-existent words |
 | `collapseSpace` as a separate post-processing step | Keeps the main decode loop simple — whitespace normalization runs once on the finished string |
@@ -226,24 +278,25 @@ for (auto& line : doc.lines()) {
 
 ## Current limitations
 
-- `cleanLine` returns a cleaned `std::string` — it does not yet return a vector of tokens. The caller must still split on spaces.
 - Method definitions live in `.hh` files. Including from multiple translation units will cause linker errors. This will be resolved when the library is split into `.hh`/`.cc` pairs.
-- No dictionary, morphology, or grammar — naqsh is a tokenizer, not an NLP framework.
-- URL detection uses an alpha-dot-alpha heuristic. Full URL preservation (`https://urdu.com`) is deferred to Phase 2.
-- Religious and honorific ligatures (U+FDFA `ﷺ`, U+FDFB `ﷻ`, U+FDF2 `ﷲ`,
-  and approximately 60 similar code points in the Arabic Presentation Forms
-  block U+FB50–U+FDFF) are passed through untouched as single opaque tokens.
-  naqsh is designed for general Urdu NLP pipelines — news, literature,
-  legal and government text — where these ligatures do not appear in
-  significant quantities. Corpora containing religious text require a
-  domain-specific pre-processing layer before calling `cleanLine()`.
-  See the comment block in `normalize()` for the full list and rationale.
+- No dictionary, morphology, or grammar — Naqsh is a cleaner and normalizer, not an NLP framework.
+- URL detection uses an alpha-dot-alpha heuristic. Full URL preservation (`https://urdu.com`) is a future improvement.
+- Religious ligatures are passed through untouched by default. Enable `NORMALIZE_RELIGIOUS_LIGATURES` when processing religious corpora.
+
+---
+
+## Related Packages
+
+| Package | Role |
+|---|---|
+| [Parser](https://github.com/KHAAdotPK/Parser.git) | CSV / text file iterator that Naqsh plugs into |
+| [imprint](https://github.com/KHAAdotPK/imprint.git) | English text cleaner — Naqsh's counterpart for English corpora |
 
 ---
 
 ## Contributing
 
-The project is under active development. Issues and pull requests are welcome. If you are working with Urdu text and have corpus samples that break the tokenizer, opening an issue with the sample is the most useful contribution you can make right now.
+The project is under active development. Issues and pull requests are welcome. If you are working with Urdu text and have corpus samples that break the cleaner, opening an issue with the sample is the most useful contribution you can make right now.
 
 ---
 
@@ -253,4 +306,4 @@ This project is governed by a license, the details of which can be located in th
 
 ---
 
-*naqsh — built for Urdu, from the ground up.*
+*Naqsh — built for Urdu, from the ground up.*
