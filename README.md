@@ -109,6 +109,106 @@ g++ -std=c++17 -DNORMALIZE_RELIGIOUS_LIGATURES -DDROP_INVALID_UTF8_SEQUENCE -o m
 
 ---
 
+## Building the Vocabulary Table
+
+Once Naqsh and Parser are wired together, a single call to `build_hash_table()` reads the entire corpus, cleans every line through `Cleaner::cleanLine()`, and returns a fully-built `TABLES*` containing:
+
+- a hash table of every unique token (the vocabulary),
+- a per-word linked list of every occurrence in the corpus, and
+- a linked list of every line, each holding a linked list of its tokens in order.
+
+```cpp
+#include <iostream>
+#include <fstream>
+
+#define KEYS_COMMON_STARTING_SIZE 23
+#define ITERATOR_USER_DEFINED_CLEANER_CODE
+#define CSV_PARSER_TOKEN_DELIMITER ' '
+
+#include "../lib/Naqsh/header.hh"
+#include "../lib/Hash/header.hh"
+#include "../lib/Parser/header.hh"
+
+int main(int argc, char* argv[])
+{
+    try
+    {
+        Parser parser("../lib/Naqsh/data/test.txt");
+
+        TABLES* tables = parser.build_hash_table();
+
+        // ── Vocabulary statistics ─────────────────────────────────────────────
+        std::cout << "Bucket Count:             " << tables->get_bucket_count() << "\n";
+        std::cout << "Buckets Used (vocab size):" << tables->get_bucket_used()  << "\n";
+        std::cout << "Maximum Tokens Per Line:  " << tables->get_maximum_tokens_per_line() << "\n";
+        std::cout << "Minimum Tokens Per Line:  " << tables->get_minimum_tokens_per_line() << "\n";
+        std::cout << "Total Tokens:             " << tables->get_total_tokens() << "\n";
+
+        // ── Corpus reconstruction via the lines linked list ───────────────────
+        WordRecord** hash_table  = tables->hash_to_word_record;
+        size_t*      index_table = tables->word_id_to_hash;
+
+        std::ofstream ofile("output.txt");
+
+        LINE* current_line = tables->lines;         // head of the line linked list
+
+        while (current_line != nullptr)
+        {
+            std::cout << "Line with " << current_line->n << " tokens: ";
+
+            TOKEN* current_token = current_line->tokens; // head of this line's token list
+            current_line = current_line->next;           // advance line cursor
+
+            while (current_token != nullptr)
+            {
+                size_t token_id = current_token->token_id;          // word_id for this token
+                std::cout << token_id << " ";
+
+                // word_id  →  bucket index  →  WordRecord  →  word string
+                WordRecord* word_record = hash_table[index_table[token_id]];
+                ofile << word_record->word << " ";
+
+                current_token = current_token->next;
+            }
+
+            ofile << "\n";
+        }
+    }
+    catch (const std::runtime_error& e)
+    {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+
+    return 0;
+}
+```
+
+### What the loop does
+
+The `lines` linked list preserves the full sequential layout of the corpus — every line in order, every token within each line in order. Each `TOKEN` node carries two fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `token_id` | `size_t` | The word's permanent ID — its row index in the embedding matrix |
+| `occurrence` | `OccurrenceNode*` | Pointer to this token's exact position record `(line, token)` |
+
+To recover the word string from a `TOKEN`, follow the two-step lookup:
+
+```
+token_id  →  index_table[token_id]          →  bucket index
+           →  hash_table[bucket_index]       →  WordRecord*
+           →  word_record->word              →  std::string
+```
+
+This is O(1) — two array dereferences and a pointer follow.
+
+### `KEYS_COMMON_STARTING_SIZE`
+
+Controls the initial number of buckets in the hash table. It should be a prime number. The table rehashes automatically as the vocabulary grows, so the starting size only affects how soon the first rehash is triggered. For small corpora `23` is fine; for large corpora a larger prime (e.g. `1009`) reduces early rehash overhead.
+
+---
+
 ## What it does
 
 ### Hand-rolled UTF-8 decoder
